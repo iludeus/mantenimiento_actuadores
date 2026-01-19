@@ -1,0 +1,26 @@
+services:
+  adquisicion:
+    build: ./adquisicion
+    ports:
+      - "8001:8001"
+    environment:
+      - ANALYSIS_URL=http://analisis:8002
+      - RUTA_CSV=/datos/actuator_data.csv
+      - INTERVALO_SEG=1
+    volumes:
+      - ./datos:/datos:ro
+
+  analisis:
+    build: ./analisis
+    ports:
+      - "8002:8002"
+    environment:
+      - HISTORY_URL=http://historial_ui:8003
+
+  historial_ui:
+    build: ./historial_ui
+    ports:
+      - "8003:8003"
+      - "8501:8501"
+    volumes:
+      - ./historial_ui/data:/data

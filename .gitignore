@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Base de datos local (NO subir)
+historial_ui/data/app.db
+historial_ui/data/
+
+# VSCode
+.vscode/
+
+# Otros
+.DS_Store

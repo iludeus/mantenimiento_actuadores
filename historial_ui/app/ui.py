@@ -4,10 +4,10 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# Configuración fija (NO editable por usuario)
+# Configuración fija
 # =========================
-API_URL = "http://historial_ui:8003"       # API historial (FastAPI)
-ADQ_URL = "http://adquisicion:8001"       # Adquisición (FastAPI)
+API_URL = "http://historial_ui:8003"   # API historial (FastAPI)
+ADQ_URL = "http://adquisicion:8001"   # Adquisición (FastAPI)
 
 AUTO_UI = True
 INTERVALO_UI_SEG = 1  # fijo 1s
@@ -87,23 +87,6 @@ def chip(texto: str, color: str):
         unsafe_allow_html=True
     )
 
-def badge(texto: str, color: str):
-    st.markdown(
-        f"""
-        <div style="
-            display:inline-block;
-            padding:10px 14px;
-            border-radius:14px;
-            background:{color};
-            color:white;
-            font-weight:800;
-            letter-spacing:0.2px;">
-            {texto}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
 def fmt_num(x, nd=1, suf=""):
     if x is None:
         return "-"
@@ -149,7 +132,7 @@ def max_estado(a, b):
     return a if severidad_estado(a) >= severidad_estado(b) else b
 
 # =========================
-# Estilos (sin cambiar todo el diseño)
+# Estilos (mantener diseño)
 # =========================
 st.set_page_config(page_title="Monitoreo de actuadores", layout="wide")
 
@@ -183,28 +166,29 @@ st.markdown(
 # =========================
 # Encabezado
 # =========================
-st.title("Monitoreo de actuadores (simple)")
+st.title("Monitoreo de actuadores brazo robótico")
 st.caption("Actualización fija: adquisición = 1s, UI = 1s. Actuadores: base / hombro / codo.")
 
 machine_id = st.text_input("ID del brazo (machine_id)", value="arm_01")
 
 # =========================
-# Control (bonito, sin JSON crudo)
+# Control de adquisición (solo 2 botones)
 # =========================
 st.subheader("Control de adquisición")
 
 cA, cB = st.columns([1.2, 3.0])
 
 with cA:
-    # Solo mostramos estado resumido (sin JSON crudo)
     j_adq, err_adq = safe_get(f"{ADQ_URL}/api/v1/health")
     if err_adq:
         chip("Adquisición: NO conectada", color_estado("critical"))
         st.write(f"⚠️ {err_adq}")
         adq_corriendo = False
+        adq_pausado = False
     else:
         adq_corriendo = bool(j_adq.get("corriendo", False))
         adq_pausado = bool(j_adq.get("pausado", False))
+
         if adq_corriendo and not adq_pausado:
             chip("Adquisición: corriendo", color_estado("normal"))
         elif adq_corriendo and adq_pausado:
@@ -212,7 +196,7 @@ with cA:
         else:
             chip("Adquisición: detenida", "#616161")
 
-        st.caption(f"Enviados: {j_adq.get('enviado_total', 0)} | intervalo: {j_adq.get('intervalo_seg', 1)}s")
+        st.caption(f"Enviados: {j_adq.get('enviado_total', 0)}")
 
     j_hist, err_hist = safe_get(f"{API_URL}/api/v1/health")
     if err_hist:
@@ -222,52 +206,35 @@ with cA:
         chip("Historial: conectado", color_estado("normal"))
 
 with cB:
-    b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 1.3])
+    b1, b2 = st.columns([1, 1.6])
 
     with b1:
-        if st.button("▶ Start", width="stretch"):
+        if st.button("▶ Iniciar demo", width="stretch"):
             res, err = safe_post(f"{ADQ_URL}/api/v1/control/start")
             if err:
                 st.error(f"Start falló: {err}")
             else:
-                st.success(res.get("msg", "Start OK"))
+                st.success(res.get("msg", "Demo iniciada"))
 
     with b2:
-        if st.button("⏸ Pause", width="stretch"):
-            res, err = safe_post(f"{ADQ_URL}/api/v1/control/pause")
-            if err:
-                st.error(f"Pause falló: {err}")
-            else:
-                st.info(res.get("msg", "Pause OK"))
-
-    with b3:
-        if st.button("⏵ Resume", width="stretch"):
-            res, err = safe_post(f"{ADQ_URL}/api/v1/control/resume")
-            if err:
-                st.error(f"Resume falló: {err}")
-            else:
-                st.info(res.get("msg", "Resume OK"))
-
-    with b4:
-        if st.button("⏹ Stop", width="stretch"):
-            res, err = safe_post(f"{ADQ_URL}/api/v1/control/stop")
-            if err:
-                st.error(f"Stop falló: {err}")
-            else:
-                st.warning(res.get("msg", "Stop OK"))
-
-    with b5:
+        # Este botón pausa la adquisición (detiene extracción). Es toggle.
         if st.button("🛑 DETENER ROBOT", type="primary", width="stretch"):
-            res, err = safe_post(f"{ADQ_URL}/api/v1/control/stop")
+            res, err = safe_post(f"{ADQ_URL}/api/v1/control/pause")
             if err:
                 st.error(f"Detener falló: {err}")
             else:
-                st.error("⚠️ Robot detenido (simulación). Se detuvo la adquisición.")
+                pausado = res.get("pausado", None)
+                if pausado is True:
+                    st.error("⚠️ Robot detenido (simulación). Se pausó la adquisición.")
+                elif pausado is False:
+                    st.success("▶️ Robot reanudado (simulación).")
+                else:
+                    st.info(res.get("msg", "Acción ejecutada"))
 
 st.divider()
 
 # =========================
-# Estado actual (por actuador) - estilo "bonito"
+# Estado actual (por actuador)
 # =========================
 st.subheader("Estado actual (por actuador)")
 
@@ -297,7 +264,6 @@ for act in ACTUADORES:
     if (st_act or "").lower() == "critical":
         act_criticos.append(act)
 
-# Header estado global
 colG1, colG2 = st.columns([1.2, 3.0])
 with colG1:
     chip(f"Estado general: {estado_global.upper()} {emoji_estado(estado_global)}", color_estado(estado_global))
@@ -306,16 +272,15 @@ with colG2:
     if act_criticos:
         st.error(f"🚨 Recomendación: DETENER ROBOT. Actuadores críticos: {', '.join(act_criticos)}")
     elif sin_datos:
-        st.info(f"⏳ Aún sin datos para: {', '.join(sin_datos)}. Presiona Start y espera unos segundos.")
+        st.info(f"⏳ Aún sin datos para: {', '.join(sin_datos)}. Presiona Iniciar demo y espera unos segundos.")
     else:
         st.success("✅ Operación aceptable (sin condición crítica).")
 
-# Tarjetas por actuador
 cols = st.columns(3)
 
 for i, act in enumerate(ACTUADORES):
     with cols[i]:
-        st.markdown(f"<div class='tarjeta'>", unsafe_allow_html=True)
+        st.markdown("<div class='tarjeta'>", unsafe_allow_html=True)
         st.markdown(f"### {act}")
 
         data = latest_por_actuador.get(act, {})
@@ -326,9 +291,7 @@ for i, act in enumerate(ACTUADORES):
             continue
 
         estado = data.get("state", "unknown")
-        ts = ""
 
-        # metrics
         metrics = data.get("metrics", {}) or {}
         temp = metrics.get("temp_mean", None)
         rpm = metrics.get("rpm_mean", None)
@@ -336,14 +299,11 @@ for i, act in enumerate(ACTUADORES):
 
         st_temp, st_rpm, st_vib = estado_por_metrica(temp, rpm, vib)
 
-        # etiqueta principal estado
         chip(f"{estado.upper()}", color_estado(estado))
 
-        # línea "último ts"
         ts = data.get("ts", "-")
         st.markdown(f"<span class='mini'>Último ts: {ts}</span>", unsafe_allow_html=True)
 
-        # métricas grandes
         m1, m2, m3 = st.columns(3)
         with m1:
             st.metric("Temp media (°C)", fmt_num(temp, 1, ""), delta=None)
@@ -352,12 +312,10 @@ for i, act in enumerate(ACTUADORES):
         with m3:
             st.metric("Vib RMS", fmt_num(vib, 3, ""), delta=None)
 
-        # chips por métrica
         chip(f"TEMP: {fmt_num(temp, 1, '°C')}", color_estado(st_temp))
         chip(f"RPM: {fmt_num(rpm, 0, ' rpm')}", color_estado(st_rpm))
         chip(f"VIB: {fmt_num(vib, 3, '')}", color_estado(st_vib))
 
-        # razones
         reasons = data.get("reasons", []) or []
         if reasons:
             st.markdown(
@@ -375,7 +333,7 @@ for i, act in enumerate(ACTUADORES):
 st.divider()
 
 # =========================
-# Gráficos sobrepuestos (por métrica) - base/hombro/codo juntos
+# Gráficos sobrepuestos
 # =========================
 st.subheader("Señales (muestras) — gráficos sobrepuestos")
 
@@ -408,7 +366,6 @@ for act in ACTUADORES:
 if errores:
     st.warning("Algunos actuadores no pudieron cargar samples:\n\n" + "\n".join(errores))
 
-# Unificar en un DF "largo" para gráficas sobrepuestas
 def build_overlay(metric_col: str):
     frames = []
     for act, df in dfs.items():
@@ -419,14 +376,12 @@ def build_overlay(metric_col: str):
         frames.append(tmp)
     if not frames:
         return pd.DataFrame()
-    out = pd.concat(frames, ignore_index=True)
-    return out
+    return pd.concat(frames, ignore_index=True)
 
 overlay_temp = build_overlay("motor_temp_c")
 overlay_rpm = build_overlay("motor_rpm")
 overlay_vib = build_overlay("motor_vibration_rms")
 
-# Para line_chart: pivot index=ts columns=actuator_id values=metric
 def plot_overlay(df_long, title, height=260):
     if df_long.empty:
         st.info(f"No hay datos para {title}.")
@@ -447,7 +402,7 @@ with c3:
 st.divider()
 
 # =========================
-# Diagnósticos (igual que antes, pero limpio)
+# Diagnósticos
 # =========================
 st.subheader("Historial de diagnósticos (por actuador)")
 act_diag = st.selectbox("Actuador", ACTUADORES, index=1)

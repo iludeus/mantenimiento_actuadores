@@ -3,20 +3,17 @@ import csv
 import time
 import threading
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 app = FastAPI(title="Servicio de Adquisición")
 
 ANALYSIS_URL = os.getenv("ANALYSIS_URL", "http://analisis:8002")
 RUTA_CSV = os.getenv("RUTA_CSV", "/datos/actuator_data.csv")
-
-# Intervalo entre envíos (segundos). Lo puedes cambiar desde UI con /control/intervalo
-INTERVALO_SEG = float(os.getenv("INTERVALO_SEG", "3"))
+INTERVALO_SEG = float(os.getenv("INTERVALO_SEG", "1.0"))
 
 estado = {
     "corriendo": False,
     "pausado": False,
-    "detener": False,
     "enviado_total": 0,
 }
 
@@ -24,32 +21,25 @@ def enviar_muestra(muestra: dict):
     r = requests.post(f"{ANALYSIS_URL}/api/v1/ingest", json=muestra, timeout=5)
     r.raise_for_status()
 
-def hilo_reproductor():
+def reproductor_csv():
     """
-    Lee el CSV y envía muestras en LOOP infinito.
-    Cuando llega al final del archivo, vuelve al inicio.
-    Respeta pause/resume/stop.
+    Lee el CSV y envía filas en loop infinito.
+    Pause detiene temporalmente el envío.
     """
-    global INTERVALO_SEG
     try:
-        while True:
-            if estado["detener"]:
-                break
-
+        while estado["corriendo"]:
             with open(RUTA_CSV, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if estado["detener"]:
+                    if not estado["corriendo"]:
                         break
 
-                    while estado["pausado"] and not estado["detener"]:
+                    while estado["pausado"] and estado["corriendo"]:
                         time.sleep(0.2)
 
-                    if estado["detener"]:
+                    if not estado["corriendo"]:
                         break
 
-                    # CSV esperado:
-                    # ts,machine_id,actuator_id,motor_temp_c,motor_rpm,motor_vibration_rms
                     muestra = {
                         "ts": row["ts"],
                         "machine_id": row["machine_id"],
@@ -63,72 +53,43 @@ def hilo_reproductor():
                         enviar_muestra(muestra)
                         estado["enviado_total"] += 1
                     except Exception as e:
-                        # estilo estudiante: imprimir y seguir
                         print(f"[adquisicion] Error enviando muestra: {e}")
 
-                    time.sleep(float(INTERVALO_SEG))
+                    time.sleep(INTERVALO_SEG)
 
+            # al terminar el CSV, vuelve a empezar automáticamente (loop demo)
     finally:
         estado["corriendo"] = False
         estado["pausado"] = False
-        estado["detener"] = False
+
 
 @app.get("/api/v1/health")
 def health():
-    return {
-        "ok": True,
-        "servicio": "adquisicion",
-        **estado,
-        "ruta_csv": RUTA_CSV,
-        "analysis_url": ANALYSIS_URL,
-        "intervalo_seg": INTERVALO_SEG,
-    }
+    return {"ok": True, "servicio": "adquisicion", **estado}
+
 
 @app.post("/api/v1/control/start")
 def start():
     if estado["corriendo"]:
-        return {"ok": True, "msg": "Ya estaba corriendo", "intervalo_seg": INTERVALO_SEG}
+        return {"ok": True, "msg": "Ya estaba corriendo"}
 
     estado["corriendo"] = True
     estado["pausado"] = False
-    estado["detener"] = False
 
-    t = threading.Thread(target=hilo_reproductor, daemon=True)
+    t = threading.Thread(target=reproductor_csv, daemon=True)
     t.start()
 
-    return {"ok": True, "msg": "Reproduccion iniciada", "intervalo_seg": INTERVALO_SEG}
+    return {"ok": True, "msg": "Demo iniciada (leyendo CSV)"}
+
 
 @app.post("/api/v1/control/pause")
-def pause():
-    if not estado["corriendo"]:
-        return {"ok": True, "msg": "No estaba corriendo (nada que pausar)"}
-    estado["pausado"] = True
-    return {"ok": True, "msg": "Pausado"}
-
-@app.post("/api/v1/control/resume")
-def resume():
-    if not estado["corriendo"]:
-        return {"ok": True, "msg": "No estaba corriendo (nada que reanudar)"}
-    estado["pausado"] = False
-    return {"ok": True, "msg": "Reanudado"}
-
-@app.post("/api/v1/control/stop")
-def stop():
-    if not estado["corriendo"]:
-        return {"ok": True, "msg": "No estaba corriendo (nada que detener)"}
-    estado["detener"] = True
-    estado["pausado"] = False
-    return {"ok": True, "msg": "Deteniendo adquisicion"}
-
-@app.post("/api/v1/control/intervalo")
-def set_intervalo(segundos: float):
+def pause_toggle():
     """
-    Cambia el intervalo mientras corre.
+    Toggle: si está corriendo, pausa/reanuda.
+    Sirve como botón único en la UI.
     """
-    global INTERVALO_SEG
-    if segundos < 0.2:
-        segundos = 0.2
-    if segundos > 30:
-        segundos = 30
-    INTERVALO_SEG = float(segundos)
-    return {"ok": True, "intervalo_seg": INTERVALO_SEG}
+    if not estado["corriendo"]:
+        return {"ok": False, "msg": "No está corriendo. Usa START primero."}
+
+    estado["pausado"] = not estado["pausado"]
+    return {"ok": True, "pausado": estado["pausado"], "msg": "Pausado" if estado["pausado"] else "Reanudado"}
